@@ -25,14 +25,13 @@ class Command(IntEnum):
     PERIAPSIS = 192  # 4 bytes value
     APOAPSIS = 193  # 4 bytes value
     ALTITUDE = 194
-    VERTICAL_VELOCITY = 195
-    HORIZONTAL_VELOCITY = 196
+    VERTICAL_SPEED = 195
+    HORIZONTAL_SPEED = 196
 
 
 class Controller:
     def __init__(self):
         self.kerbal = krpc.connect(name='protoconsole', address='127.0.0.1')
-        vessel = self.kerbal.space_center.active_vessel
         self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=TIMEOUT)  # open serial port
         print(self.arduino.name)  # check which port was really used
         if self.wait_for_board():
@@ -40,17 +39,40 @@ class Controller:
         else:
             print("Failed to connect to board")
 
-        self.apoapsis = self.kerbal.add_stream(getattr, vessel.orbit, 'apoapsis_altitude')
-        self.periapsis = self.kerbal.add_stream(getattr, vessel.orbit, 'periapsis_altitude')
+        self.init_streams()
 
         self.send_packet(Command.HELLO.value)
         self.loop()
         self.arduino.close()  # close port
 
+    def init_streams(self):
+        self.vessel = self.kerbal.space_center.active_vessel
+        self.orbit = self.vessel.orbit
+        self.orbital_flight = self.vessel.flight(self.vessel.orbital_reference_frame)
+        self.surface_flight = self.vessel.flight(self.vessel.surface_reference_frame)
+        self.apoapsis = self.kerbal.add_stream(getattr, self.orbit, 'apoapsis_altitude')
+        self.periapsis = self.kerbal.add_stream(getattr, self.orbit, 'periapsis_altitude')
+        self.pitch = self.kerbal.add_stream(getattr, self.surface_flight, 'pitch')
+        self.thrust = self.kerbal.add_stream(getattr, self.vessel, 'thrust')
+        self.mass = self.kerbal.add_stream(getattr, self.vessel, 'mass')
+        self.altitude = self.kerbal.add_stream(getattr, self.orbital_flight, 'mean_altitude')
+        self.vertical_speed = self.kerbal.add_stream(getattr, self.orbital_flight, 'vertical_speed')
+        self.horizontal_speed = self.kerbal.add_stream(getattr, self.orbital_flight, 'horizontal_speed')
+
+    def twr(self):
+        return self.thrust()/(self.mass() * self.orbit.body.surface_gravity)
+
     def loop(self):
-        self.send_packet(Command.PERIAPSIS.value, int(self.periapsis()))
-        self.send_packet(Command.APOAPSIS.value, int(self.apoapsis()))
-        time.sleep(1)
+        while True:
+            self.send_packet(Command.PERIAPSIS.value, int(self.periapsis()))
+            self.send_packet(Command.APOAPSIS.value, int(self.apoapsis()))
+            self.send_packet(Command.ALTITUDE.value, int(self.altitude()))
+            self.send_packet(Command.VERTICAL_SPEED.value, int(self.vertical_speed()))
+            self.send_packet(Command.HORIZONTAL_SPEED.value, int(self.horizontal_speed()))
+            self.send_packet(Command.TWR.value, round(self.twr()*10))
+            self.send_packet(Command.PITCH.value, int(self.pitch()))
+
+            time.sleep(0.5)
 
     def wait_for_board(self):
         while True:
@@ -65,16 +87,17 @@ class Controller:
         return command.to_bytes(1, 'big')
 
     def send_packet(self, command, value=None):
+        print(command)
+        print(value)
         payload = None
         if command < 64:
             payload = self._command_to_byte(command)
         elif command < 128:
-            payload = self._command_to_byte(command) + value.to_bytes(1, 'little'
-            )
+            payload = self._command_to_byte(command) + value.to_bytes(1, 'little', signed=True)
         elif command < 192:
-            payload = self._command_to_byte(command) + value.to_bytes(2, 'little')
+            payload = self._command_to_byte(command) + value.to_bytes(2, 'little', signed=True)
         else:
-            payload = self._command_to_byte(command) + value.to_bytes(4, 'little')
+            payload = self._command_to_byte(command) + value.to_bytes(4, 'little', signed=True)
 
         self.arduino.write(payload)
 
