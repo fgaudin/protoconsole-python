@@ -48,7 +48,7 @@ class Controller:
     def init_streams(self):
         self.vessel = self.kerbal.space_center.active_vessel
         self.orbit = self.vessel.orbit
-        self.orbital_flight = self.vessel.flight(self.vessel.orbital_reference_frame)
+        self.orbital_flight = self.vessel.flight(self.vessel.orbit.body.reference_frame)
         self.surface_flight = self.vessel.flight(self.vessel.surface_reference_frame)
         self.apoapsis = self.kerbal.add_stream(getattr, self.orbit, 'apoapsis_altitude')
         self.periapsis = self.kerbal.add_stream(getattr, self.orbit, 'periapsis_altitude')
