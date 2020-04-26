@@ -19,6 +19,7 @@ class Command(IntEnum):
     FLAGS1 = 64  # flags for solar panel, gear, docked, lights, RCS, SAS, brake, antenna
     TWR = 70
     PITCH=71
+    STAGE_FUEL=72
     # 128 - 191 -> command with 16 bits value
 
     # 192 - 255 -> command with 32 bits value
@@ -62,6 +63,20 @@ class Controller:
     def twr(self):
         return self.thrust()/(self.mass() * self.orbit.body.surface_gravity)
 
+    def stage_fuel(self):
+        stage = self.vessel.control.current_stage-1
+        for i in range(10):
+            resources = self.vessel.resources_in_decouple_stage(stage)
+            fuel = resources.amount("LiquidFuel")
+            max = resources.max("LiquidFuel")
+            stage -= 1
+            if max > 0:
+                break
+        if max:
+            return fuel * 100 / max
+        
+        return 0
+
     def loop(self):
         while True:
             self.send_packet(Command.PERIAPSIS.value, int(self.periapsis()))
@@ -71,6 +86,7 @@ class Controller:
             self.send_packet(Command.HORIZONTAL_SPEED.value, int(self.horizontal_speed()))
             self.send_packet(Command.TWR.value, round(self.twr()*10))
             self.send_packet(Command.PITCH.value, int(self.pitch()))
+            self.send_packet(Command.STAGE_FUEL.value, round(self.stage_fuel()))
 
             time.sleep(0.5)
 
