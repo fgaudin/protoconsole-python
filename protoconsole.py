@@ -20,6 +20,10 @@ class Command(IntEnum):
     TWR = 70
     PITCH=71
     STAGE_FUEL=72
+    STAGE_OX=73
+    STAGE_MONOPROP=74
+    STAGE_ELEC=75
+    STAGE_XENON=76
     # 128 - 191 -> command with 16 bits value
 
     # 192 - 255 -> command with 32 bits value
@@ -61,21 +65,37 @@ class Controller:
         self.horizontal_speed = self.kerbal.add_stream(getattr, self.orbital_flight, 'horizontal_speed')
 
     def twr(self):
-        return self.thrust()/(self.mass() * self.orbit.body.surface_gravity)
+        divisor = self.mass() * self.orbit.body.surface_gravity
+        return self.thrust()/divisor if divisor else 0
 
-    def stage_fuel(self):
+    def stage_resource(self, resource):
         stage = self.vessel.control.current_stage-1
         for i in range(10):
             resources = self.vessel.resources_in_decouple_stage(stage)
-            fuel = resources.amount("LiquidFuel")
-            max = resources.max("LiquidFuel")
+            fuel = resources.amount(resource)
+            max = resources.max(resource)
             stage -= 1
             if max > 0:
                 break
         if max:
-            return fuel * 100 / max
+            return fuel * 10 / max
         
         return 0
+
+    def stage_fuel(self):
+        return self.stage_resource('LiquidFuel')
+
+    def stage_ox(self):
+        return self.stage_resource('Oxidizer')
+
+    def stage_monoprop(self):
+        return self.stage_resource('MonoPropellant')
+
+    def stage_elec(self):
+        return self.stage_resource('ElectricCharge')
+
+    def stage_xenon(self):
+        return self.stage_resource('XenonGas')
 
     def loop(self):
         while True:
@@ -87,6 +107,10 @@ class Controller:
             self.send_packet(Command.TWR.value, round(self.twr()*10))
             self.send_packet(Command.PITCH.value, int(self.pitch()))
             self.send_packet(Command.STAGE_FUEL.value, round(self.stage_fuel()))
+            self.send_packet(Command.STAGE_OX.value, round(self.stage_ox()))
+            self.send_packet(Command.STAGE_MONOPROP.value, round(self.stage_monoprop()))
+            self.send_packet(Command.STAGE_ELEC.value, round(self.stage_elec()))
+            self.send_packet(Command.STAGE_XENON.value, round(self.stage_xenon()))
 
             time.sleep(0.5)
 
