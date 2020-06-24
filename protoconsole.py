@@ -12,26 +12,29 @@ TIMEOUT = 1
 
 class Command(IntEnum):
     # 0 -> reserved
-    # 1 - 63 -> command without value
+    # 1 - 7 -> command without value
     HELLO = 1
     BYE = 2
-    # 64 - 127 -> command with 8 bits value
-    FLAGS1 = 64  # flags for solar panel, gear, docked, lights, RCS, SAS, brake, antenna
-    TWR = 70
-    PITCH=71
-    STAGE_FUEL=72
-    STAGE_OX=73
-    STAGE_MONOPROP=74
-    STAGE_ELEC=75
-    STAGE_XENON=76
-    # 128 - 191 -> command with 16 bits value
-
-    # 192 - 255 -> command with 32 bits value
-    PERIAPSIS = 192  # 4 bytes value
-    APOAPSIS = 193  # 4 bytes value
-    ALTITUDE = 194
-    VERTICAL_SPEED = 195
-    HORIZONTAL_SPEED = 196
+    # 8 - 31 -> command with 8 bits value
+    FLAGS1 = 8  # flags for solar panel, gear, docked, lights, RCS, SAS, brake, antenna
+    TWR = 9
+    PITCH=10
+    STAGE_FUEL=11
+    STAGE_OX=12
+    STAGE_MONOPROP=13
+    STAGE_ELEC=14
+    STAGE_XENON=15
+    STAGE_O2 = 16
+    STAGE_HO2 = 17
+    STAGE_FOOD = 18
+    STAGE_CO2 = 19
+    STAGE_WASTE = 20
+    # 32 - 63 -> command with 32 bits value
+    PERIAPSIS = 32  # 4 bytes value
+    APOAPSIS = 33  # 4 bytes value
+    ALTITUDE = 34
+    VERTICAL_SPEED = 35
+    HORIZONTAL_SPEED = 36
 
 
 class Controller:
@@ -97,6 +100,21 @@ class Controller:
     def stage_xenon(self):
         return self.stage_resource('XenonGas')
 
+    def stage_o2(self):
+        return self.stage_resource('Oxygen')
+
+    def stage_h2o(self):
+        return self.stage_resource('Water')
+
+    def stage_food(self):
+        return self.stage_resource('Food')
+
+    def stage_co2(self):
+        return self.stage_resource('CarbonDioxide')
+
+    def stage_waste(self):
+        return self.stage_resource('Waste')
+
     def loop(self):
         while True:
             self.send_packet(Command.PERIAPSIS.value, int(self.periapsis()))
@@ -111,6 +129,11 @@ class Controller:
             self.send_packet(Command.STAGE_MONOPROP.value, round(self.stage_monoprop()))
             self.send_packet(Command.STAGE_ELEC.value, round(self.stage_elec()))
             self.send_packet(Command.STAGE_XENON.value, round(self.stage_xenon()))
+            self.send_packet(Command.STAGE_O2.value, round(self.stage_o2()))
+            self.send_packet(Command.STAGE_HO2.value, round(self.stage_h2o()))
+            self.send_packet(Command.STAGE_FOOD.value, round(self.stage_food()))
+            self.send_packet(Command.STAGE_CO2.value, round(self.stage_co2()))
+            self.send_packet(Command.STAGE_WASTE.value, round(self.stage_waste()))
 
             time.sleep(0.5)
 
@@ -130,12 +153,10 @@ class Controller:
         print(command)
         print(value)
         payload = None
-        if command < 64:
+        if command < 8:
             payload = self._command_to_byte(command)
-        elif command < 128:
+        elif command < 32:
             payload = self._command_to_byte(command) + value.to_bytes(1, 'little', signed=True)
-        elif command < 192:
-            payload = self._command_to_byte(command) + value.to_bytes(2, 'little', signed=True)
         else:
             payload = self._command_to_byte(command) + value.to_bytes(4, 'little', signed=True)
 
