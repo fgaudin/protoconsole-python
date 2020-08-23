@@ -16,7 +16,9 @@ class Command(IntEnum):
     HELLO = 1
     BYE = 2
     # 8 - 31 -> command with 8 bits value
-    FLAGS1 = 8  # flags for solar panel, gear, docked, lights, RCS, SAS, brake, antenna
+    # flags for solar panel, gear
+    # 2 bits per part, 0 = off, 1 = problem, 2 = deploying/retracting, 3 = deployed
+    FLAGS1 = 8
     TWR = 9
     PITCH=10
     STAGE_FUEL=11
@@ -29,6 +31,9 @@ class Command(IntEnum):
     STAGE_FOOD = 18
     STAGE_CO2 = 19
     STAGE_WASTE = 20
+    # RCS, SAS, brake, docked, lights, antenna
+    # 2 bits per part, 0 = off, 1 = problem, 2 = deploying/retracting, 3 = deployed
+    FLAGS2 = 21
     # 32 - 63 -> command with 32 bits value
     PERIAPSIS = 32  # 4 bytes value
     APOAPSIS = 33  # 4 bytes value
@@ -115,6 +120,33 @@ class Controller:
     def stage_waste(self):
         return self.stage_resource('Waste')
 
+    def flags1(self):
+        # flags for solar panel, gear
+        # 2 bits per part
+        # 0 = off
+        # 1 = problem
+        # 2 = deploying/retracting
+        # 3 = deployed
+        flags = 0
+
+        def set_flag(flags, states, offset):
+            if {'retracting', 'deploying'} & states:
+                flags |= 2 << offset
+            elif states == {'extended'}:
+                flags |= 3 << offset
+            elif states == {'retracted'}:
+                flags |= 0 << offset
+            else:
+                flags |= 1 << offset
+            return flags
+
+        sp_states = {sp.state.name for sp in self.vessel.parts.solar_panels}
+        flags = set_flag(flags, sp_states, offset=0)
+        gear_states = {g.state.name for g in self.vessel.parts.legs}
+        flags = set_flag(flags, gear_states, offset=2)
+        
+        return flags
+
     def loop(self):
         while True:
             self.send_packet(Command.PERIAPSIS.value, int(self.periapsis()))
@@ -134,6 +166,7 @@ class Controller:
             self.send_packet(Command.STAGE_FOOD.value, round(self.stage_food()))
             self.send_packet(Command.STAGE_CO2.value, round(self.stage_co2()))
             self.send_packet(Command.STAGE_WASTE.value, round(self.stage_waste()))
+            self.send_packet(Command.FLAGS1.value, int(self.flags1()))
 
             time.sleep(0.5)
 
@@ -150,7 +183,7 @@ class Controller:
         return command.to_bytes(1, 'big')
 
     def send_packet(self, command, value=None):
-        print(command)
+        print(f"cmd: {command}")
         print(value)
         payload = None
         if command < 8:
@@ -168,4 +201,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
