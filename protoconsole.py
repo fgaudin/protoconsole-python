@@ -3,6 +3,7 @@ from enum import IntEnum
 import krpc
 import serial
 import time
+import math
 
 
 PORT = 'COM3'
@@ -147,6 +148,9 @@ class Controller:
         flags = set_flag(flags, sp_states, offset=0)
         gear_states = {g.state.name for g in self.vessel.parts.legs}
         flags = set_flag(flags, gear_states, offset=2)
+
+        antenna = math.ceil(self.vessel.comms.signal_strength * 3)
+        flags |= antenna << 4
         
         return flags
 
