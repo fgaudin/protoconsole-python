@@ -16,8 +16,7 @@ class Command(IntEnum):
     HELLO = 1
     BYE = 2
     # 8 - 31 -> command with 8 bits value
-    # flags for solar panel, gear
-    # 2 bits per part, 0 = off, 1 = problem, 2 = deploying/retracting, 3 = deployed
+    # states for solar panel, gear, antenna
     FLAGS1 = 8
     TWR = 9
     PITCH=10
@@ -31,8 +30,9 @@ class Command(IntEnum):
     STAGE_FOOD = 18
     STAGE_CO2 = 19
     STAGE_WASTE = 20
-    # RCS, SAS, brake, docked, lights, antenna
-    # 2 bits per part, 0 = off, 1 = problem, 2 = deploying/retracting, 3 = deployed
+    # RCS, SAS, brake, docked, lights, .05g, contact
+    # 1 bit per part, 0 = off, 1 = on
+    # 2 bit for antenna: 0 - 3
     FLAGS2 = 21
     # 32 - 63 -> command with 32 bits value
     PERIAPSIS = 32  # 4 bytes value
@@ -121,18 +121,21 @@ class Controller:
         return self.stage_resource('Waste')
 
     def flags1(self):
-        # flags for solar panel, gear
+        # flags for solar panel, gear, antenna
         # 2 bits per part
         # 0 = off
         # 1 = problem
         # 2 = deploying/retracting
         # 3 = deployed
+        #
+        # antenna:
+        # 0 - 3 signal strength
         flags = 0
 
         def set_flag(flags, states, offset):
-            if {'retracting', 'deploying'} & states:
+            if {'retracting', 'extending', 'deploying'} & states:
                 flags |= 2 << offset
-            elif states == {'extended'}:
+            elif states < {'extended', 'deployed'}:
                 flags |= 3 << offset
             elif states == {'retracted'}:
                 flags |= 0 << offset
@@ -145,6 +148,20 @@ class Controller:
         gear_states = {g.state.name for g in self.vessel.parts.legs}
         flags = set_flag(flags, gear_states, offset=2)
         
+        return flags
+
+    def flags2(self):
+        # RCS, SAS, brake, docked, lights, .05g, contact
+        # 1 bit per part, 0 = off, 1 = on
+        flags = 0
+        flags |= self.vessel.control.rcs
+        flags |= self.vessel.control.sas << 1
+        flags |= self.vessel.control.brakes << 2
+        flags |= any([d.state.name == 'docked' for d in self.vessel.parts.docking_ports]) << 3
+        flags |= self.vessel.control.lights << 4
+        flags |= (self.vessel.flight().g_force > 0.05) << 5
+        flags |= (self.vessel.situation.name in ['landed', 'splashed', 'pre_launch']) << 6
+
         return flags
 
     def loop(self):
@@ -167,6 +184,7 @@ class Controller:
             self.send_packet(Command.STAGE_CO2.value, round(self.stage_co2()))
             self.send_packet(Command.STAGE_WASTE.value, round(self.stage_waste()))
             self.send_packet(Command.FLAGS1.value, int(self.flags1()))
+            self.send_packet(Command.FLAGS2.value, int(self.flags2()))
 
             time.sleep(0.5)
 
