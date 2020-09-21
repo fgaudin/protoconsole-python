@@ -4,11 +4,12 @@ import krpc
 import serial
 import time
 import math
+import random
 
 
 PORT = 'COM3'
 BAUD_RATE = 115200
-TIMEOUT = 1
+TIMEOUT = 0
 
 
 class Command(IntEnum):
@@ -151,11 +152,12 @@ class Controller:
 
         antenna = math.ceil(self.vessel.comms.signal_strength * 3)
         flags |= antenna << 4
+        flags |= random.choice([True, False]) << 6  # staging
         
         return flags
 
     def flags2(self):
-        # RCS, SAS, brake, docked, lights, .05g, contact
+        # RCS, SAS, brake, docked, lights, .05g, contact, master alarm
         # 1 bit per part, 0 = off, 1 = on
         flags = 0
         flags |= self.vessel.control.rcs
@@ -165,32 +167,80 @@ class Controller:
         flags |= self.vessel.control.lights << 4
         flags |= (self.vessel.flight().g_force > 0.05) << 5
         flags |= (self.vessel.situation.name in ['landed', 'splashed', 'pre_launch']) << 6
+        flags |= random.choice([True, False]) << 7  # master alarm
 
         return flags
 
-    def loop(self):
-        while True:
-            self.send_packet(Command.PERIAPSIS.value, int(self.periapsis()))
-            self.send_packet(Command.APOAPSIS.value, int(self.apoapsis()))
-            self.send_packet(Command.ALTITUDE.value, int(self.altitude()))
-            self.send_packet(Command.VERTICAL_SPEED.value, int(self.vertical_speed()))
-            self.send_packet(Command.HORIZONTAL_SPEED.value, int(self.horizontal_speed()))
-            self.send_packet(Command.TWR.value, round(self.twr()*10))
-            self.send_packet(Command.PITCH.value, int(self.pitch()))
-            self.send_packet(Command.STAGE_FUEL.value, round(self.stage_fuel()))
-            self.send_packet(Command.STAGE_OX.value, round(self.stage_ox()))
-            self.send_packet(Command.STAGE_MONOPROP.value, round(self.stage_monoprop()))
-            self.send_packet(Command.STAGE_ELEC.value, round(self.stage_elec()))
-            self.send_packet(Command.STAGE_XENON.value, round(self.stage_xenon()))
-            self.send_packet(Command.STAGE_O2.value, round(self.stage_o2()))
-            self.send_packet(Command.STAGE_HO2.value, round(self.stage_h2o()))
-            self.send_packet(Command.STAGE_FOOD.value, round(self.stage_food()))
-            self.send_packet(Command.STAGE_CO2.value, round(self.stage_co2()))
-            self.send_packet(Command.STAGE_WASTE.value, round(self.stage_waste()))
-            self.send_packet(Command.FLAGS1.value, int(self.flags1()))
-            self.send_packet(Command.FLAGS2.value, int(self.flags2()))
+    def handle_input(self, incoming_bytes):
+        print('received: ')
+        print('{0:#016b}'.format(int.from_bytes(incoming_bytes, 'big')))
+        print("\n")
 
-            time.sleep(0.5)
+        def bitwise_and(a, b):
+            return bytes(x & y for x, y in zip(a, b))
+
+        def check_bit(i):
+            comp = bitwise_and(incoming_bytes, (1 << (15-i)).to_bytes(2, 'big'))
+            return bool(int.from_bytes(comp, 'big'))
+
+        if check_bit(1):
+            print('stage')
+        if check_bit(2):
+            print('sas')
+            self.vessel.control.sas = not self.vessel.control.sas
+        if check_bit(3):
+            print('rcs')
+            self.vessel.control.rcs = not self.vessel.control.rcs
+        if check_bit(4):
+            print('lights')
+            self.vessel.control.lights = not self.vessel.control.lights
+        if check_bit(5):
+            print('undock')
+        self.vessel.control.gear = check_bit(8)
+        self.vessel.control.solar_panels = check_bit(9)
+        if check_bit(10):
+            print('engine')
+        if check_bit(11):
+            print('staging')
+        self.vessel.control.brakes = check_bit(14)
+
+    def loop(self):
+        previous = 0
+        interval = 0.1 # 500 milliseconds
+
+        while True:
+            now = time.time()
+
+            previous_input_byte = None
+            while self.arduino.in_waiting:
+                input_byte = self.arduino.read(1)
+                if input_byte == (0).to_bytes(1, 'big') and previous_input_byte == (255).to_bytes(1, 'big'):
+                    value = self.arduino.read(2)
+                    self.handle_input(value)
+                else:
+                    previous_input_byte = input_byte
+
+            if now - previous > interval:
+                previous = now
+                self.send_packet(Command.PERIAPSIS.value, int(self.periapsis()).to_bytes(4, 'little', signed=True))
+                self.send_packet(Command.APOAPSIS.value, int(self.apoapsis()).to_bytes(4, 'little', signed=True))
+                self.send_packet(Command.ALTITUDE.value, int(self.altitude()).to_bytes(4, 'little', signed=True))
+                self.send_packet(Command.VERTICAL_SPEED.value, int(self.vertical_speed()).to_bytes(4, 'little', signed=True))
+                self.send_packet(Command.HORIZONTAL_SPEED.value, int(self.horizontal_speed()).to_bytes(4, 'little', signed=True))
+                self.send_packet(Command.TWR.value, round(self.twr()*10).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.PITCH.value, int(self.pitch()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_FUEL.value, round(self.stage_fuel()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_OX.value, round(self.stage_ox()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_MONOPROP.value, round(self.stage_monoprop()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_ELEC.value, round(self.stage_elec()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_XENON.value, round(self.stage_xenon()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_O2.value, round(self.stage_o2()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_HO2.value, round(self.stage_h2o()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_FOOD.value, round(self.stage_food()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_CO2.value, round(self.stage_co2()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.STAGE_WASTE.value, round(self.stage_waste()).to_bytes(1, 'little', signed=True))
+                self.send_packet(Command.FLAGS1.value, int(self.flags1()).to_bytes(1, 'little', signed=False))
+                self.send_packet(Command.FLAGS2.value, int(self.flags2()).to_bytes(1, 'little', signed=False))
 
     def wait_for_board(self):
         while True:
@@ -205,15 +255,15 @@ class Controller:
         return command.to_bytes(1, 'big')
 
     def send_packet(self, command, value=None):
-        print(f"cmd: {command}")
-        print(value)
+        # print(f"cmd: {command}")
+        # print(value)
         payload = None
         if command < 8:
             payload = self._command_to_byte(command)
         elif command < 32:
-            payload = self._command_to_byte(command) + value.to_bytes(1, 'little', signed=True)
+            payload = self._command_to_byte(command) + value
         else:
-            payload = self._command_to_byte(command) + value.to_bytes(4, 'little', signed=True)
+            payload = self._command_to_byte(command) + value
 
         self.arduino.write(payload)
 
