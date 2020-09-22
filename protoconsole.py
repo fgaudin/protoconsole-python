@@ -184,24 +184,32 @@ class Controller:
             return bool(int.from_bytes(comp, 'big'))
 
         if check_bit(1):
-            print('stage')
+            self.vessel.control.activate_next_stage()
         if check_bit(2):
-            print('sas')
             self.vessel.control.sas = not self.vessel.control.sas
         if check_bit(3):
-            print('rcs')
             self.vessel.control.rcs = not self.vessel.control.rcs
         if check_bit(4):
-            print('lights')
             self.vessel.control.lights = not self.vessel.control.lights
         if check_bit(5):
-            print('undock')
+            for d in self.vessel.parts.docking_ports:
+                if d.state.name == 'docked':
+                    d.undock()
+                    self.vessel = self.kerbal.space_center.active_vessel
+                    break
         self.vessel.control.gear = check_bit(8)
         self.vessel.control.solar_panels = check_bit(9)
-        if check_bit(10):
-            print('engine')
-        if check_bit(11):
-            print('staging')
+
+
+        active_stage = self.vessel.control.current_stage
+        in_stage_parts = self.vessel.parts.in_stage(active_stage)
+
+        for p in in_stage_parts:
+            if p.engine:
+                e = p.engine
+                state = check_bit(10)
+                if e.active != state:
+                    e.active = state
         self.vessel.control.brakes = check_bit(14)
 
     def loop(self):
