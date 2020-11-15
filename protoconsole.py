@@ -10,6 +10,7 @@ import random
 PORT = 'COM3'
 BAUD_RATE = 115200
 TIMEOUT = 0
+REFRESH_RATE = 0.1
 
 
 class Command(IntEnum):
@@ -42,10 +43,21 @@ class Command(IntEnum):
     ALTITUDE = 34
     VERTICAL_SPEED = 35
     HORIZONTAL_SPEED = 36
+    Q = 37
+
+
+class ArduinoCommand(IntEnum):
+    SWITCHES = 1
+    LIGHTS = 2
+    UNDOCK = 3
+    RCS = 4
+    SAS = 5
+    STAGE = 6
 
 
 class Controller:
     def __init__(self):
+        self.last_input_check = time.time()
         self.kerbal = krpc.connect(name='protoconsole', address='127.0.0.1')
         self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=TIMEOUT)  # open serial port
         print(self.arduino.name)  # check which port was really used
@@ -73,6 +85,7 @@ class Controller:
         self.altitude = self.kerbal.add_stream(getattr, self.orbital_flight, 'mean_altitude')
         self.vertical_speed = self.kerbal.add_stream(getattr, self.orbital_flight, 'vertical_speed')
         self.horizontal_speed = self.kerbal.add_stream(getattr, self.orbital_flight, 'horizontal_speed')
+        self.dynamic_pressure = self.kerbal.add_stream(getattr, self.orbital_flight, 'dynamic_pressure')
 
     def twr(self):
         divisor = self.mass() * self.orbit.body.surface_gravity
@@ -172,61 +185,58 @@ class Controller:
         return flags
 
     def handle_input(self, incoming_bytes):
-        print('received: ')
-        print('{0:#016b}'.format(int.from_bytes(incoming_bytes, 'big')))
+        now = time.time()
+
+        self.last_input_check = now
+        command = incoming_bytes[0]
+        value = incoming_bytes[1]
+        print('command: ')
+        print(command)
+        print("\n")
+        print('value: ')
+        print(value)
         print("\n")
 
-        def bitwise_and(a, b):
-            return bytes(x & y for x, y in zip(a, b))
+        if command == ArduinoCommand.SWITCHES.value:
+            self.vessel.control.solar_panels = bool(value & (1 << 1))
+            self.vessel.control.gear = bool(value & (1 << 2))
+            self.vessel.control.brakes = bool(value & (1 << 3))
 
-        def check_bit(i):
-            comp = bitwise_and(incoming_bytes, (1 << (15-i)).to_bytes(2, 'big'))
-            return bool(int.from_bytes(comp, 'big'))
-
-        if check_bit(1):
-            self.vessel.control.activate_next_stage()
-        if check_bit(2):
-            self.vessel.control.sas = not self.vessel.control.sas
-        if check_bit(3):
-            self.vessel.control.rcs = not self.vessel.control.rcs
-        if check_bit(4):
-            self.vessel.control.lights = not self.vessel.control.lights
-        if check_bit(5):
+            engine_active = bool(value & 1)
+            active_stage = self.vessel.control.current_stage
+            in_stage_parts = self.vessel.parts.in_stage(active_stage)
+            for p in in_stage_parts:
+                if p.engine:
+                    e = p.engine
+                    state = engine_active
+                    if e.active != state:
+                        e.active = state
+        elif command == ArduinoCommand.SAS.value:
+            self.vessel.control.sas = bool(value & 1)
+        elif command == ArduinoCommand.RCS.value:
+            self.vessel.control.rcs = bool(value & 1)
+        elif command == ArduinoCommand.LIGHTS.value:
+            self.vessel.control.lights = bool(value & 1)
+        elif command == ArduinoCommand.UNDOCK.value:
             for d in self.vessel.parts.docking_ports:
                 if d.state.name == 'docked':
                     d.undock()
                     self.vessel = self.kerbal.space_center.active_vessel
                     break
-        self.vessel.control.gear = check_bit(8)
-        self.vessel.control.solar_panels = check_bit(9)
-
-
-        active_stage = self.vessel.control.current_stage
-        in_stage_parts = self.vessel.parts.in_stage(active_stage)
-
-        for p in in_stage_parts:
-            if p.engine:
-                e = p.engine
-                state = check_bit(10)
-                if e.active != state:
-                    e.active = state
-        self.vessel.control.brakes = check_bit(14)
+        elif command == ArduinoCommand.STAGE.value:
+            self.vessel.control.activate_next_stage()
 
     def loop(self):
         previous = 0
-        interval = 0.1 # 500 milliseconds
+        interval = REFRESH_RATE
 
         while True:
             now = time.time()
 
             previous_input_byte = None
             while self.arduino.in_waiting:
-                input_byte = self.arduino.read(1)
-                if input_byte == (0).to_bytes(1, 'big') and previous_input_byte == (255).to_bytes(1, 'big'):
-                    value = self.arduino.read(2)
-                    self.handle_input(value)
-                else:
-                    previous_input_byte = input_byte
+                value = self.arduino.read(2)
+                self.handle_input(value)
 
             if now - previous > interval:
                 previous = now
@@ -249,6 +259,7 @@ class Controller:
                 self.send_packet(Command.STAGE_WASTE.value, round(self.stage_waste()).to_bytes(1, 'little', signed=True))
                 self.send_packet(Command.FLAGS1.value, int(self.flags1()).to_bytes(1, 'little', signed=False))
                 self.send_packet(Command.FLAGS2.value, int(self.flags2()).to_bytes(1, 'little', signed=False))
+                self.send_packet(Command.Q.value, int(self.dynamic_pressure()).to_bytes(4, 'little', signed=True))
 
     def wait_for_board(self):
         while True:
