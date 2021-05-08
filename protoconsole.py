@@ -59,7 +59,7 @@ class Controller:
     def __init__(self):
         self.last_input_check = time.time()
         self.kerbal = krpc.connect(name='protoconsole', address='127.0.0.1')
-        self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=TIMEOUT)  # open serial port
+        self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=None)  # open serial port
         print(self.arduino.name)  # check which port was really used
         if self.wait_for_board():
             print('Board connected')
@@ -185,6 +185,7 @@ class Controller:
         return flags
 
     def handle_input(self, incoming_bytes):
+        return
         now = time.time()
 
         self.last_input_check = now
@@ -233,7 +234,6 @@ class Controller:
         while True:
             now = time.time()
 
-            previous_input_byte = None
             while self.arduino.in_waiting:
                 value = self.arduino.read(2)
                 self.handle_input(value)
