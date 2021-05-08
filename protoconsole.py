@@ -1,11 +1,12 @@
 from enum import IntEnum
 
+import threading
 import krpc
 import serial
 import time
 import math
 import random
-
+import inputs
 
 PORT = 'COM3'
 BAUD_RATE = 115200
@@ -56,7 +57,8 @@ class ArduinoCommand(IntEnum):
 
 
 class Controller:
-    def __init__(self):
+    def __init__(self, shared_state):
+        self.shared_state = shared_state
         self.last_input_check = time.time()
         self.kerbal = krpc.connect(name='protoconsole', address='127.0.0.1')
         self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=None)  # open serial port
@@ -184,59 +186,12 @@ class Controller:
 
         return flags
 
-    def handle_input(self, incoming_bytes):
-        return
-        now = time.time()
-
-        self.last_input_check = now
-        command = incoming_bytes[0]
-        value = incoming_bytes[1]
-        print('command: ')
-        print(command)
-        print("\n")
-        print('value: ')
-        print(value)
-        print("\n")
-
-        if command == ArduinoCommand.SWITCHES.value:
-            self.vessel.control.solar_panels = bool(value & (1 << 1))
-            self.vessel.control.gear = bool(value & (1 << 2))
-            self.vessel.control.brakes = bool(value & (1 << 3))
-
-            engine_active = bool(value & 1)
-            active_stage = self.vessel.control.current_stage
-            in_stage_parts = self.vessel.parts.in_stage(active_stage)
-            for p in in_stage_parts:
-                if p.engine:
-                    e = p.engine
-                    state = engine_active
-                    if e.active != state:
-                        e.active = state
-        elif command == ArduinoCommand.SAS.value:
-            self.vessel.control.sas = bool(value & 1)
-        elif command == ArduinoCommand.RCS.value:
-            self.vessel.control.rcs = bool(value & 1)
-        elif command == ArduinoCommand.LIGHTS.value:
-            self.vessel.control.lights = bool(value & 1)
-        elif command == ArduinoCommand.UNDOCK.value:
-            for d in self.vessel.parts.docking_ports:
-                if d.state.name == 'docked':
-                    d.undock()
-                    self.vessel = self.kerbal.space_center.active_vessel
-                    break
-        elif command == ArduinoCommand.STAGE.value:
-            self.vessel.control.activate_next_stage()
-
     def loop(self):
         previous = 0
         interval = REFRESH_RATE
 
         while True:
             now = time.time()
-
-            while self.arduino.in_waiting:
-                value = self.arduino.read(2)
-                self.handle_input(value)
 
             if now - previous > interval:
                 previous = now
@@ -286,9 +241,15 @@ class Controller:
 
         self.arduino.write(payload)
 
-def main():
-    controller = Controller()
 
+class InternalState:
+    def __init__(self):
+        self.staging = False
+        self.display_mode = 'ascent'
 
 if __name__ == '__main__':
-    main()
+    state = InternalState()
+    x = threading.Thread(target=inputs.run, args=(state,))
+    x.start()
+
+    controller = Controller(state)

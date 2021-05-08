@@ -5,9 +5,10 @@ PORT = 'COM7'
 BAUD_RATE = 115200
 
 
-class Controller:
-    def __init__(self):
-        self.kerbal = krpc.connect(name='__name__', address='127.0.0.1')
+class InputController:
+    def __init__(self, shared_state):
+        self.shared_state = shared_state
+        self.kerbal = krpc.connect(name=__name__, address='127.0.0.1')
         self.vessel = self.kerbal.space_center.active_vessel
         self.control = self.vessel.control
         self.arduino = None
@@ -15,17 +16,33 @@ class Controller:
         self.staging_enabled = False
         self.handlers = {
             # switch, (parent, attribute, toggle) or callable
+            16: self._ascent_mode,
             17: self._stage,
             18: (self.control, 'sas', True),
             19: (self.control, 'rcs', True),
             20: (self.control, 'lights', True),
             21: self._undock,
+            22: self._orbit_mode,
+            23: self._descent_mode,
             24: (self.vessel.control, 'gear', False),
             25: (self.vessel.control, 'solar_panels', False),
             26: self._engines,
             27: self._staging,
+            28: self._docking_mode,
             30: (self.vessel.control, 'brakes', False),
         }
+
+    def _ascent_mode(self, enabled):
+        self.shared_state.display_mode = 'ascent'
+
+    def _orbit_mode(self, enabled):
+        self.shared_state.display_mode = 'orbit'
+
+    def _descent_mode(self, enabled):
+        self.shared_state.display_mode = 'descent'
+
+    def _docking_mode(self, enabled):
+        self.shared_state.display_mode = 'docking'
 
     def _engines(self, enabled):
         active_stage = self.vessel.control.current_stage
@@ -37,10 +54,10 @@ class Controller:
                     e.active = enabled
 
     def _staging(self, enabled):
-        self.staging_enabled = enabled
+        self.shared_state.staging = enabled
 
     def _stage(self, enabled):
-        if self.staging_enabled and enabled:
+        if self.shared_state.staging and enabled:
             self.vessel.control.activate_next_stage()
 
     def _undock(self, enabled):
@@ -106,6 +123,6 @@ class Controller:
 
         self.arduino.close()
 
-if __name__ == '__main__':
-    controller = Controller()
+def run(state):
+    controller = InputController(state)
     controller.listen()
