@@ -1,3 +1,5 @@
 .venv
 *.swp
 .vscode
+*.pyc
+__pycache__

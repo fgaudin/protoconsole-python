@@ -7,6 +7,7 @@ import time
 import math
 import random
 import inputs
+import telemetry
 
 PORT = 'COM3'
 BAUD_RATE = 115200
@@ -249,7 +250,9 @@ class InternalState:
 
 if __name__ == '__main__':
     state = InternalState()
-    x = threading.Thread(target=inputs.run, args=(state,))
-    x.start()
 
-    controller = Controller(state)
+    in_th = threading.Thread(target=inputs.run, args=(state,))
+    in_th.start()
+
+    telemetry = threading.Thread(target=telemetry.run, args=(state,))
+    telemetry.start()
