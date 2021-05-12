@@ -251,8 +251,8 @@ class InternalState:
 if __name__ == '__main__':
     state = InternalState()
 
-    in_th = threading.Thread(target=inputs.run, args=(state,))
-    in_th.start()
+    input_th = threading.Thread(target=inputs.run, args=(state,))
+    input_th.start()
 
     telemetry = threading.Thread(target=telemetry.run, args=(state,))
     telemetry.start()

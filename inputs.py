@@ -61,11 +61,12 @@ class InputController:
             self.vessel.control.activate_next_stage()
 
     def _undock(self, enabled):
-        for d in self.vessel.parts.docking_ports:
-            if d.state.name == 'docked':
-                d.undock()
-                self.vessel = self.kerbal.space_center.active_vessel
-                break
+        if enabled:
+            for d in self.vessel.parts.docking_ports:
+                if d.state.name == 'docked':
+                    d.undock()
+                    self.vessel = self.kerbal.space_center.active_vessel
+                    break
 
     def set_switch(self, switch, value):
         if switch not in self.handlers:
