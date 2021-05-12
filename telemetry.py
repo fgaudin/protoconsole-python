@@ -1,3 +1,4 @@
+from collections import defaultdict
 from threading import Lock
 import time
 import krpc
@@ -13,10 +14,14 @@ class Telemetry:
         self.shared_state = shared_state
         self.flags = 0
         self.flags_updated = False
+        self.flags_lock = Lock()
         self.flags2 = 0
         self.flags2_updated = False
         self.flags2_lock = Lock()
         self.last_antenna_check = 0
+        self.last_fuel_check = 0
+        self.last_life_support_check = 0
+        self.resources = [0, 0, 0, 0, 0]
 
         # arduino
         self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=None)  # open serial port
@@ -37,17 +42,18 @@ class Telemetry:
                 break
 
     def _update_flags(self, pos, value: int, value_func=None):
-        mask = 1 << pos
-        val = value
-        if callable(value_func):
-            val = value_func(value)
-        changed = (self.flags ^ (val << pos)) & mask
-        if changed:
-            if val:
-                self.flags |= mask
-            else:
-                self.flags &= ~mask
-            self.flags_updated = True
+        with self.flags_lock:
+            mask = 1 << pos
+            val = value
+            if callable(value_func):
+                val = value_func(value)
+            changed = (self.flags ^ (val << pos)) & mask
+            if changed:
+                if val:
+                    self.flags |= mask
+                else:
+                    self.flags &= ~mask
+                self.flags_updated = True
 
     def _add_flags_stream(self, name, position, parent, attribute, value_func=None, callback=None):
         stream = self.kerbal.add_stream(getattr, parent, attribute)
@@ -138,9 +144,76 @@ class Telemetry:
     def check_staging(self):
         self._update_flags(7, 1, self.shared_state.staging)
 
+    def check_fuels(self):
+        now = time.time()
+        if now - self.last_fuel_check >= 1.0:  # checking every 1 sec
+            amount = defaultdict(float)
+            max_fuel = defaultdict(float)
+            changed = False
+
+            stage = self.vessel.control.current_stage-1
+            staged_resources = self.vessel.resources_in_decouple_stage(stage, True)
+            total_resources = self.vessel.resources
+            resources = (
+                ('LiquidFuel', staged_resources),
+                ('Oxidizer', staged_resources),
+                ('MonoPropellant', total_resources), 
+                ('ElectricCharge', total_resources),
+                ('XenonGas', staged_resources),
+            )
+            i = 0
+            for r in resources:
+                f = r[0]
+                amount[f] = r[1].amount(f)
+                max_fuel[f] = r[1].max(f)
+                
+                value = round(amount[f] * 10 / max_fuel[f]) if max_fuel[f] else 0
+                if value != self.resources[i]:
+                    changed = True
+                    self.resources[i] = value
+
+                i += 1
+
+            if changed:
+                values_to_hex = "".join([f'{r:0>2X}' for r in self.resources])
+                self._send('u', values_to_hex)
+            
+            self.last_fuel_check = now
+
+    def check_life_support(self):
+        #  {'Oxygen': 0, 'Water': 0, 'Food': 0, 'CarbonDioxide': 0, 'Waste': 0}
+        now = time.time()
+        if now - self.last_life_support_check >= 1.0:  # checking every 1 sec
+            amount = defaultdict(float)
+            max_ls = defaultdict(float)
+            changed = False
+
+            r = self.vessel.resources
+            i = 0
+            for f in ('Oxygen', 'Water', 'Food', 'CarbonDioxide', 'Waste'):
+                amount[f] = r.amount(f)
+                max_ls[f] = r.max(f)
+                
+                value = round(amount[f] * 10 / max_ls[f]) if max_ls[f] else 0
+                if value != self.resources[i]:
+                    changed = True
+                    self.resources[i] = value
+                
+                i += 1
+
+            if changed:
+                values_to_hex = "".join([f'{r:0>2X}' for r in self.resources])
+                self._send('l', values_to_hex)
+            
+            self.last_life_support_check = now
+            
     def check_non_streamable_data(self):
         self.check_antenna()
         self.check_staging()
+        if self.shared_state.resource_mode == 'fuel':
+            self.check_fuels()
+        else:
+            self.check_life_support()
         
     def _send(self, cmd, value):
         packet = f'[{cmd}:{value}]'.encode()
@@ -151,7 +224,8 @@ class Telemetry:
         if self.flags_updated:
             flags_to_hex = f'{self.flags:0>2X}'
             self._send('f', flags_to_hex)
-            self.flags_updated = False
+            with self.flags_lock:
+                self.flags_updated = False
         if self.flags2_updated:
             flags_to_hex = f'{self.flags2:0>2X}'
             self._send('g', flags_to_hex)

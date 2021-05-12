@@ -16,6 +16,8 @@ class InputController:
         self.staging_enabled = False
         self.handlers = {
             # switch, (parent, attribute, toggle) or callable
+            0: self._fuel,
+            1: self._life_support,
             16: self._ascent_mode,
             17: self._stage,
             18: (self.control, 'sas', True),
@@ -56,6 +58,14 @@ class InputController:
     def _staging(self, enabled):
         self.shared_state.staging = enabled
 
+    def _fuel(self, enabled):
+        if enabled:
+            self.shared_state.resource_mode = 'fuel'
+    
+    def _life_support(self, enabled):
+        if enabled:
+            self.shared_state.resource_mode = 'life_support'
+
     def _stage(self, enabled):
         if self.shared_state.staging and enabled:
             self.vessel.control.activate_next_stage()
@@ -88,11 +98,13 @@ class InputController:
 
     def handle_state(self, state):
         value = bytes.fromhex(state)
+        init = False
         if self.state is None:
             self.state = bytes(len(value))
+            init = True
 
         for i, _byte in enumerate(value):
-            changed = _byte ^ self.state[i]
+            changed = 0b11111111 if init else _byte ^ self.state[i]
             if changed:
                 for j in range(8):
                     mask = 1 << j

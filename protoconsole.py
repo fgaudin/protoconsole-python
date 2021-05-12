@@ -138,55 +138,6 @@ class Controller:
     def stage_waste(self):
         return self.stage_resource('Waste')
 
-    def flags1(self):
-        # flags for solar panel, gear, antenna
-        # 2 bits per part
-        # 0 = off
-        # 1 = problem
-        # 2 = deploying/retracting
-        # 3 = deployed
-        #
-        # antenna:
-        # 0 - 3 signal strength
-        flags = 0
-
-        def set_flag(flags, states, offset):
-            if {'retracting', 'extending', 'deploying'} & states:
-                flags |= 2 << offset
-            elif states < {'extended', 'deployed'}:
-                flags |= 3 << offset
-            elif states == {'retracted'}:
-                flags |= 0 << offset
-            else:
-                flags |= 1 << offset
-            return flags
-
-        sp_states = {sp.state.name for sp in self.vessel.parts.solar_panels}
-        flags = set_flag(flags, sp_states, offset=0)
-        gear_states = {g.state.name for g in self.vessel.parts.legs}
-        flags = set_flag(flags, gear_states, offset=2)
-
-        antenna = math.ceil(self.vessel.comms.signal_strength * 3)
-        flags |= antenna << 4
-        flags |= random.choice([True, False]) << 6  # staging
-        
-        return flags
-
-    def flags2(self):
-        # RCS, SAS, brake, docked, lights, .05g, contact, master alarm
-        # 1 bit per part, 0 = off, 1 = on
-        flags = 0
-        flags |= self.vessel.control.rcs
-        flags |= self.vessel.control.sas << 1
-        flags |= self.vessel.control.brakes << 2
-        flags |= any([d.state.name == 'docked' for d in self.vessel.parts.docking_ports]) << 3
-        flags |= self.vessel.control.lights << 4
-        flags |= (self.vessel.flight().g_force > 0.05) << 5
-        flags |= (self.vessel.situation.name in ['landed', 'splashed', 'pre_launch']) << 6
-        flags |= random.choice([True, False]) << 7  # master alarm
-
-        return flags
-
     def loop(self):
         previous = 0
         interval = REFRESH_RATE
@@ -247,6 +198,7 @@ class InternalState:
     def __init__(self):
         self.staging = False
         self.display_mode = 'ascent'
+        self.resource_mode = 'fuel'
 
 if __name__ == '__main__':
     state = InternalState()
