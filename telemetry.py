@@ -1,6 +1,7 @@
 from collections import defaultdict
-from threading import Lock
+from threading import Lock, RLock
 import time
+from utils import metricify
 import krpc
 import serial
 import math
@@ -12,6 +13,9 @@ BAUD_RATE = 57600
 class Telemetry:
     def __init__(self, shared_state):
         self.shared_state = shared_state
+
+        self.serial_lock = Lock()
+
         self.flags = 0
         self.flags_updated = False
         self.flags_lock = Lock()
@@ -22,6 +26,10 @@ class Telemetry:
         self.last_fuel_check = 0
         self.last_life_support_check = 0
         self.resources = [0, 0, 0, 0, 0]
+        self.last_resource_mode = None
+        self.display_streams = []
+        self.display_data = defaultdict(int)
+        self.display_update = defaultdict(int)
 
         # arduino
         self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=None)  # open serial port
@@ -31,6 +39,8 @@ class Telemetry:
         self.kerbal = krpc.connect(name='telemetry', address='127.0.0.1')
         self.vessel = self.kerbal.space_center.active_vessel
         self.orbit = self.vessel.orbit
+        self.orbital_flight = self.vessel.flight(self.vessel.orbit.body.reference_frame)
+        self.surface_flight = self.vessel.flight(self.vessel.surface_reference_frame)
         self.flight = self.vessel.flight()
 
     def _wait_for_arduino(self):
@@ -121,9 +131,65 @@ class Telemetry:
             stream.add_callback(callback_gear)
             stream.start()
 
+    def _display_data_callback(self, field, value, format_func=None):
+        formatted = value
+        if format_func:
+            formatted = format_func(value)
+
+        now = time.time()
+        if now - self.display_update[field] > 1 and formatted != self.display_data[field]:
+            self._send(field, formatted)
+            self.display_data[field] = formatted
+            self.display_update[field] = now
+
+    def _add_data_stream(self, obj, attr, prefix, format_func=None):
+        stream = self.kerbal.add_stream(getattr, obj, attr)
+        stream.add_callback(lambda value, f=format_func: self._display_data_callback(prefix, value, f))
+        stream.start()
+        self.display_streams.append(stream)
+
+    def init_ascent_streams(self):
+        self._add_data_stream(self.orbit, 'apoapsis_altitude', 'a', metricify)
+        self._add_data_stream(self.orbit, 'periapsis_altitude', 'p', metricify)
+        self._add_data_stream(self.orbital_flight, 'vertical_speed', 'v', metricify)
+        self._add_data_stream(self.orbital_flight, 'horizontal_speed', 'h', metricify)
+        self._add_data_stream(self.orbital_flight, 'mean_altitude', 'A', metricify)
+
+        def round_value(value):
+            return '{}'.format(round(value))
+
+        self._add_data_stream(self.surface_flight, 'pitch', 'P', round_value)
+        self._add_data_stream(self.orbital_flight, 'dynamic_pressure', 'Q', round_value)
+
+        self.thrust = self.kerbal.add_stream(getattr, self.vessel, 'thrust')
+        self.thrust.start()
+        stream = self.kerbal.add_stream(getattr, self.orbit, 'body')
+
+        def cb(body):
+            self.surface_gravity = body.surface_gravity
+        stream.add_callback(cb)
+        stream.start()
+
+        def twr_callback(value):
+            divisor = value * self.surface_gravity
+            twr = round(self.thrust()/divisor if divisor else 0, 1)
+            self._display_data_callback('t', twr)
+
+        stream = self.kerbal.add_stream(getattr, self.vessel, 'mass')
+        stream.add_callback(twr_callback)
+        stream.start()
+        self.display_streams.append(stream)
+
+    def init_display_streams(self):
+        for s in self.display_streams:
+            s.remove()
+        
+        self.init_ascent_streams()
+
     def init_streams(self):
         self.init_flags_streams()
         self.init_flags2_streams()
+        self.init_display_streams()
 
     def check_antenna(self):
         now = time.time()
@@ -146,7 +212,9 @@ class Telemetry:
 
     def check_fuels(self):
         now = time.time()
-        if now - self.last_fuel_check >= 1.0:  # checking every 1 sec
+        mode_changed = self.last_resource_mode != self.shared_state.resource_mode
+        self.last_resource_mode = self.shared_state.resource_mode
+        if mode_changed or now - self.last_fuel_check >= 1.0:  # checking every 1 sec
             amount = defaultdict(float)
             max_fuel = defaultdict(float)
             changed = False
@@ -181,9 +249,10 @@ class Telemetry:
             self.last_fuel_check = now
 
     def check_life_support(self):
-        #  {'Oxygen': 0, 'Water': 0, 'Food': 0, 'CarbonDioxide': 0, 'Waste': 0}
         now = time.time()
-        if now - self.last_life_support_check >= 1.0:  # checking every 1 sec
+        mode_changed = self.last_resource_mode != self.shared_state.resource_mode
+        self.last_resource_mode = self.shared_state.resource_mode
+        if mode_changed or now - self.last_life_support_check >= 1.0:  # checking every 1 sec
             amount = defaultdict(float)
             max_ls = defaultdict(float)
             changed = False
@@ -206,7 +275,7 @@ class Telemetry:
                 self._send('l', values_to_hex)
             
             self.last_life_support_check = now
-            
+
     def check_non_streamable_data(self):
         self.check_antenna()
         self.check_staging()
@@ -216,11 +285,12 @@ class Telemetry:
             self.check_life_support()
         
     def _send(self, cmd, value):
-        packet = f'[{cmd}:{value}]'.encode()
-        print(f'sending: {packet}')
-        self.arduino.write(packet)
+        with self.serial_lock:
+            packet = f'[{cmd}:{value}]'.encode()
+            print(f'sending: {packet}')
+            self.arduino.write(packet)
 
-    def send_updates(self):
+    def send_flag_updates(self):
         if self.flags_updated:
             flags_to_hex = f'{self.flags:0>2X}'
             self._send('f', flags_to_hex)
@@ -237,6 +307,5 @@ def run(state):
     telemetry = Telemetry(state)
     telemetry.init_streams()
     while True:
+        telemetry.send_flag_updates()
         telemetry.check_non_streamable_data()
-        telemetry.send_updates()
-
