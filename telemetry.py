@@ -30,6 +30,8 @@ class Telemetry:
         self.display_streams = []
         self.display_data = defaultdict(int)
         self.display_update = defaultdict(int)
+        self.current_display_mode = None
+        self.last_met_check = 0
 
         # arduino
         self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=None)  # open serial port
@@ -42,6 +44,9 @@ class Telemetry:
         self.orbital_flight = self.vessel.flight(self.vessel.orbit.body.reference_frame)
         self.surface_flight = self.vessel.flight(self.vessel.surface_reference_frame)
         self.flight = self.vessel.flight()
+
+    def surface_gravity(self):
+        return self.body().surface_gravity
 
     def _wait_for_arduino(self):
         print("Connecting to Arduino...")
@@ -163,15 +168,9 @@ class Telemetry:
 
         self.thrust = self.kerbal.add_stream(getattr, self.vessel, 'thrust')
         self.thrust.start()
-        stream = self.kerbal.add_stream(getattr, self.orbit, 'body')
-
-        def cb(body):
-            self.surface_gravity = body.surface_gravity
-        stream.add_callback(cb)
-        stream.start()
 
         def twr_callback(value):
-            divisor = value * self.surface_gravity
+            divisor = value * self.surface_gravity()
             twr = round(self.thrust()/divisor if divisor else 0, 1)
             self._display_data_callback('t', twr)
 
@@ -180,16 +179,30 @@ class Telemetry:
         stream.start()
         self.display_streams.append(stream)
 
+    def init_descent_streams(self):
+        pass
+
     def init_display_streams(self):
-        for s in self.display_streams:
-            s.remove()
-        
-        self.init_ascent_streams()
+        if self.shared_state.display_mode != self.current_display_mode:
+            self.current_display_mode = self.shared_state.display_mode
+
+            for s in self.display_streams:
+                s.remove()
+
+            self.display_data = defaultdict(int)
+            self.display_update = defaultdict(int)
+
+            if self.current_display_mode == 'ascent':
+                self.init_ascent_streams()
+            elif self.current_display_mode == 'descent':
+                self.init_descent_streams()
+            
 
     def init_streams(self):
+        self.body = self.kerbal.add_stream(getattr, self.orbit, 'body')
+        self.body.start()
         self.init_flags_streams()
         self.init_flags2_streams()
-        self.init_display_streams()
 
     def check_antenna(self):
         now = time.time()
@@ -276,7 +289,16 @@ class Telemetry:
             
             self.last_life_support_check = now
 
+    def check_met(self):
+        now = time.time()
+        if now - self.last_met_check >= 10:
+            met = int(self.vessel.met)
+            values_to_hex = f'{met:0>6X}'
+            self._send('m', values_to_hex)
+            self.last_met_check = now
+
     def check_non_streamable_data(self):
+        self.check_met()
         self.check_antenna()
         self.check_staging()
         if self.shared_state.resource_mode == 'fuel':
@@ -309,3 +331,4 @@ def run(state):
     while True:
         telemetry.send_flag_updates()
         telemetry.check_non_streamable_data()
+        telemetry.init_display_streams()

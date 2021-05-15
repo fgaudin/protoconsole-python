@@ -35,16 +35,20 @@ class InputController:
         }
 
     def _ascent_mode(self, enabled):
-        self.shared_state.display_mode = 'ascent'
+        if enabled:
+            self.shared_state.display_mode = 'ascent'
 
     def _orbit_mode(self, enabled):
-        self.shared_state.display_mode = 'orbit'
+        if enabled:
+            self.shared_state.display_mode = 'orbit'
 
     def _descent_mode(self, enabled):
-        self.shared_state.display_mode = 'descent'
+        if enabled:
+            self.shared_state.display_mode = 'descent'
 
     def _docking_mode(self, enabled):
-        self.shared_state.display_mode = 'docking'
+        if enabled:
+            self.shared_state.display_mode = 'docking'
 
     def _engines(self, enabled):
         active_stage = self.vessel.control.current_stage
