@@ -29,9 +29,9 @@ class Telemetry:
         self.last_resource_mode = None
         self.display_streams = []
         self.display_data = defaultdict(int)
-        self.display_update = defaultdict(int)
         self.current_display_mode = None
         self.last_met_check = 0
+        self.last_display_data_check = 0
 
         # arduino
         self.arduino = serial.Serial(PORT, baudrate=BAUD_RATE, timeout=None)  # open serial port
@@ -141,68 +141,45 @@ class Telemetry:
         if format_func:
             formatted = format_func(value)
 
-        now = time.time()
-        if now - self.display_update[field] > 1 and formatted != self.display_data[field]:
+        if formatted != self.display_data[field]:
             self._send(field, formatted)
             self.display_data[field] = formatted
-            self.display_update[field] = now
-
-    def _add_data_stream(self, obj, attr, prefix, format_func=None):
-        stream = self.kerbal.add_stream(getattr, obj, attr)
-        stream.add_callback(lambda value, f=format_func: self._display_data_callback(prefix, value, f))
-        stream.start()
-        self.display_streams.append(stream)
-
-    def init_ascent_streams(self):
-        self._add_data_stream(self.orbit, 'apoapsis_altitude', 'a', metricify)
-        self._add_data_stream(self.orbit, 'periapsis_altitude', 'p', metricify)
-        self._add_data_stream(self.orbital_flight, 'vertical_speed', 'v', metricify)
-        self._add_data_stream(self.orbital_flight, 'horizontal_speed', 'h', metricify)
-        self._add_data_stream(self.orbital_flight, 'mean_altitude', 'A', metricify)
-
-        def round_value(value):
-            return '{}'.format(round(value))
-
-        self._add_data_stream(self.surface_flight, 'pitch', 'P', round_value)
-        self._add_data_stream(self.orbital_flight, 'dynamic_pressure', 'Q', round_value)
-
-        self.thrust = self.kerbal.add_stream(getattr, self.vessel, 'thrust')
-        self.thrust.start()
-
-        def twr_callback(value):
-            divisor = value * self.surface_gravity()
-            twr = round(self.thrust()/divisor if divisor else 0, 1)
-            self._display_data_callback('t', twr)
-
-        stream = self.kerbal.add_stream(getattr, self.vessel, 'mass')
-        stream.add_callback(twr_callback)
-        stream.start()
-        self.display_streams.append(stream)
-
-    def init_descent_streams(self):
-        pass
-
-    def init_display_streams(self):
-        if self.shared_state.display_mode != self.current_display_mode:
-            self.current_display_mode = self.shared_state.display_mode
-
-            for s in self.display_streams:
-                s.remove()
-
-            self.display_data = defaultdict(int)
-            self.display_update = defaultdict(int)
-
-            if self.current_display_mode == 'ascent':
-                self.init_ascent_streams()
-            elif self.current_display_mode == 'descent':
-                self.init_descent_streams()
-            
 
     def init_streams(self):
         self.body = self.kerbal.add_stream(getattr, self.orbit, 'body')
         self.body.start()
         self.init_flags_streams()
         self.init_flags2_streams()
+
+    def check_ascent_data(self):
+        now = time.time()
+        if now - self.last_display_data_check > 0.5:
+            self._display_data_callback('a', self.orbit.apoapsis_altitude, metricify)
+            self._display_data_callback('p', self.orbit.periapsis_altitude, metricify)
+            self._display_data_callback('v', self.orbital_flight.vertical_speed, metricify)
+            self._display_data_callback('h', self.orbital_flight.horizontal_speed, metricify)
+            self._display_data_callback('A', self.orbital_flight.mean_altitude, metricify)
+            divisor = self.vessel.mass * self.surface_gravity()
+            twr = round(self.vessel.thrust/divisor if divisor else 0, 1)
+            self._display_data_callback('t', twr)
+
+            def round_value(value):
+                return '{}'.format(round(value))
+
+            self._display_data_callback('P', self.surface_flight.pitch, round_value)
+            self._display_data_callback('Q', self.orbital_flight.dynamic_pressure, round_value)
+
+            self.last_display_data_check = now
+
+    def check_display_data(self):
+            self.display_data = defaultdict(int)
+            self.display_update = defaultdict(int)
+
+            if self.shared_state.display_mode == 'ascent':
+                self.check_ascent_data()
+            elif self.shared_state.display_mode == 'descent':
+                # self.init_descent_streams()
+                pass
 
     def check_antenna(self):
         now = time.time()
@@ -291,7 +268,7 @@ class Telemetry:
 
     def check_met(self):
         now = time.time()
-        if now - self.last_met_check >= 10:
+        if now - self.last_met_check >= 3:
             met = int(self.vessel.met)
             values_to_hex = f'{met:0>6X}'
             self._send('m', values_to_hex)
@@ -299,6 +276,7 @@ class Telemetry:
 
     def check_non_streamable_data(self):
         self.check_met()
+        self.check_display_data()
         self.check_antenna()
         self.check_staging()
         if self.shared_state.resource_mode == 'fuel':
@@ -307,9 +285,9 @@ class Telemetry:
             self.check_life_support()
         
     def _send(self, cmd, value):
+        packet = f'[{cmd}:{value}]'.encode()
+        print(f'sending: {packet}')
         with self.serial_lock:
-            packet = f'[{cmd}:{value}]'.encode()
-            print(f'sending: {packet}')
             self.arduino.write(packet)
 
     def send_flag_updates(self):
@@ -331,4 +309,4 @@ def run(state):
     while True:
         telemetry.send_flag_updates()
         telemetry.check_non_streamable_data()
-        telemetry.init_display_streams()
+        # telemetry.init_display_streams()
