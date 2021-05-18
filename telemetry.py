@@ -198,7 +198,7 @@ class Telemetry:
             self.last_antenna_check = now
 
     def check_staging(self):
-        self._update_flags(7, 1, self.shared_state.staging)
+        self._update_flags(7, self.shared_state.staging)
 
     def check_fuels(self):
         now = time.time()
@@ -307,6 +307,5 @@ def run(state):
     telemetry = Telemetry(state)
     telemetry.init_streams()
     while True:
-        telemetry.send_flag_updates()
         telemetry.check_non_streamable_data()
-        # telemetry.init_display_streams()
+        telemetry.send_flag_updates()
