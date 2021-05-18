@@ -19,7 +19,6 @@ class InputController:
             0: self._fuel,
             1: self._life_support,
             16: self._ascent_mode,
-            17: self._stage,
             18: (self.control, 'sas', True),
             19: (self.control, 'rcs', True),
             20: (self.control, 'lights', True),
@@ -32,6 +31,7 @@ class InputController:
             27: self._staging,
             28: self._docking_mode,
             30: (self.vessel.control, 'brakes', False),
+            31: self._stage,
         }
 
     def _ascent_mode(self, enabled):
